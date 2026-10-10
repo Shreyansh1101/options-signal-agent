@@ -73,6 +73,8 @@ class FakeAlpaca:
     def bars(self, symbols, timeframe, start, end=None, max_pages=20):
         self.calls.append(("bars", timeframe))
         out = {}
+        if timeframe == "1Min":
+            return out
         for s in symbols:
             if s not in self.series:
                 continue

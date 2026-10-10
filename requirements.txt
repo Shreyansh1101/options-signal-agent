@@ -2,3 +2,4 @@ requests>=2.31
 pandas>=2.1
 numpy>=1.26
 PyYAML>=6.0
+websockets>=13.0

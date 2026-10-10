@@ -61,6 +61,12 @@ claude_news:
   enabled: false
   model: claude-haiku-5-5
 
+# Live mode (always-on server): streams prices + news and re-scores every minute
+live:
+  confirm_cycles: 3                  # in live mode a "cycle" is 1 minute → 3 = signal must hold for 3 minutes
+  rescan_on_news: true               # breaking headline on a watched stock → re-score within seconds
+  morning_check: true                # 9:20 AM "ready for the open" notification
+
 notifications:
   daily_summary: true                # end-of-day recap + running track record
   quiet_skips: true                  # don't notify when a signal was found but no good contract existed

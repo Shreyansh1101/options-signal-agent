@@ -1,0 +1,17 @@
+[Unit]
+Description=Options signal agent (live streaming)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=agent
+EnvironmentFile=/etc/signal-agent.env
+WorkingDirectory=/opt/signal-agent
+ExecStart=/opt/signal-agent/.venv/bin/python -u -m signal_agent live
+Restart=always
+RestartSec=15
+Nice=5
+MemoryMax=750M
+
+[Install]
+WantedBy=multi-user.target

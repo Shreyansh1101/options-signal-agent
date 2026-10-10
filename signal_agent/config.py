@@ -54,6 +54,7 @@ DEFAULTS: dict = {
         "cooldown_minutes": 90,
     },
     "claude_news": {"enabled": False, "model": "claude-haiku-5-5"},
+    "live": {"confirm_cycles": 3, "rescan_on_news": True, "morning_check": True},
     "notifications": {"daily_summary": True, "quiet_skips": True},
 }
 

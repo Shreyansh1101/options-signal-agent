@@ -29,6 +29,10 @@ def main(argv: list[str]) -> int:
             return 1
         return 0 if ok else 1
 
+    if mode == "live":
+        from .live import run_live
+        return run_live()
+
     if mode == "backtest":
         from .backtest import run_backtest
         return run_backtest(cfg, secrets)

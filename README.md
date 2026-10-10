@@ -1,16 +1,17 @@
 # Options Signal Agent
 
-A free agent that runs on GitHub every 5 minutes during market hours. Each run it:
+A free, always-on agent for a small cloud server. It sends **BUY CALL / BUY PUT** and **SELL** alerts to your phone, usually within about a minute of a setup forming.
 
-1. **Scans the market**: SPY/QQQ/IWM, your watchlist, plus Alpaca's live *most-active* and *top gainers/losers* lists.
-2. **Reads the chart** on 5-minute bars: EMA 9/21 trend, VWAP, MACD, RSI, volume compared with normal for that time of day, and the daily trend.
-3. **Reads the news** from the last 24 hours (Alpaca/Benzinga headlines). Newer headlines count more.
-4. **Scores each stock from -1 to +1.** A strong score on two scans in a row, with nothing disagreeing, gives a **BUY CALL** (bullish) or **BUY PUT** (bearish).
-5. **Picks a contract**: 3–30 days to expiry (target ~10), delta 0.35–0.65, tight bid/ask spread. The alert includes the entry, stop, target and position size.
-6. **Watches every open signal** and sends a **SELL** alert when it hits the target (+60%), the stop (-35%), a breakeven stop, a chart stop, a signal flip, or a time limit.
-7. Sends a **daily recap** at the close with a running track record (win rate and average result).
-
-Alerts arrive as push notifications on your iPhone through the free **ntfy** app.
+- **Streams live prices** (1-minute bars, IEX feed) for up to 30 stocks and **all breaking news** over Alpaca websockets.
+- **Re-scores every minute**, and within seconds when a headline hits a stock it's watching.
+- **Watches the whole market**: SPY/QQQ/IWM, your watchlist, and Alpaca's most-active stocks and top gainers/losers, refreshed every 5 minutes.
+- **Scores the chart**: EMA 9/21 trend, VWAP, MACD, RSI, volume compared with normal, and the daily trend.
+- **Scores the news**: recent headlines, with newer ones counting more.
+- A signal fires when the combined score holds for 3 straight minutes and nothing disagrees. The alert names a liquid contract (3–30 days to expiry, delta ~0.5, tight spread) and gives the entry, stop, target and size.
+- It then **tracks every open signal** and sends SELL alerts on the target (+60%), a stop (-35%), a breakeven stop, a chart stop, a signal flip, or a time limit.
+- Sends a **9:20 AM "ready"** check and a **daily recap** with a running win rate.
+- If a stream drops, it switches to polling automatically and reconnects.
+- It pulls updates (code or `config.yaml` edits) from GitHub every 15 minutes.
 
 > ⚠️ This is a signal tool, not financial advice, and nothing here guarantees profits. Options can lose 100% quickly.
 > The free Alpaca option feed is *indicative*, meaning delayed and approximate. Always check the live quote in your
@@ -18,34 +19,17 @@ Alerts arrive as push notifications on your iPhone through the free **ntfy** app
 
 ---
 
-## Setup from an iPhone (about 15 minutes, everything free)
+## Setup (iPhone only, no terminal)
+Follow the setup guide Claude made for you. In short:
 
-### 1. Alpaca (market data)
-1. In Safari go to **alpaca.markets** → *Sign up* (email + password; no money needed).
-2. Open the **Paper Trading** dashboard → right side **API Keys** → *Generate New Keys*.
-3. Copy the **Key** and the **Secret** into Notes. The Secret is shown only once.
+1. **Alpaca**: free paper account → API Key + Secret.
+2. **ntfy** app: subscribe to your private topic name.
+3. **Oracle Cloud Always Free**: create an *Ubuntu 24.04* instance, shape **VM.Standard.E2.1.Micro**. Under
+   *Advanced options → Management → Cloud-init script*, paste the setup script (it has your keys and this repo's URL).
+4. Wait about 5–10 minutes. You'll get **"✅ Signal agent is running"**.
 
-### 2. ntfy (push notifications)
-1. App Store → install **ntfy** (by Philipp Heckel).
-2. Tap **+** → enter your private topic name (Claude gave you one, e.g. `signals-xxxxxxxxxxxx`) → *Subscribe*.
-3. Allow notifications when asked.
-
-Keep the topic name secret. Anyone who knows it can read your alerts.
-
-### 3. GitHub secrets
-In your repo on github.com (Safari, *Desktop site* helps): **Settings → Secrets and variables → Actions → New repository secret**. Add:
-
-| Name | Value |
-|---|---|
-| `APCA_API_KEY_ID` | Alpaca Key |
-| `APCA_API_SECRET_KEY` | Alpaca Secret |
-| `NTFY_TOPIC` | your ntfy topic name |
-
-### 4. Test it
-**Actions** tab → *Options signals* → **Run workflow** → mode `test-notification` → Run.
-Within a minute you should get two notifications: "Signal agent connected" and "Alpaca connected".
-
-After that it runs by itself every weekday. There's nothing else to do.
+The setup script just runs `deploy/install.sh`, which adds swap, installs Python, clones this repo,
+stores your keys in `/etc/signal-agent.env` (root-only), and starts the `signal-agent` service.
 
 ---
 
@@ -53,11 +37,9 @@ After that it runs by itself every weekday. There's nothing else to do.
 
 | You want to… | Do this |
 |---|---|
-| See what's open + track record | Actions → Run workflow → `status` |
-| Test the strategy on past data | Actions → Run workflow → `backtest` (pick days/symbols). Results go to your phone, and the full table is on the run page |
-| See every score from a scan | Actions → click any run → the summary table |
-| Change settings | Open `config.yaml` → pencil icon → edit → *Commit changes*. Applies from the next run |
-| Pause it | Actions → *Options signals* → ••• → *Disable workflow* |
+| Change settings | Edit `config.yaml` on GitHub (pencil icon → *Commit changes*). The server picks it up within 15 minutes |
+| Test the strategy on past data | Add `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `NTFY_TOPIC` as repo secrets (Settings → Secrets → Actions), then Actions → *Backtest & checks* → Run workflow |
+| Pause alerts | Oracle console → Compute → Instances → your instance → **Stop**. **Start** turns it back on |
 
 ### Reading an alert
 ```
@@ -83,14 +65,15 @@ Tap the notification to open the chart. The buttons open the chart, the news sto
 ---
 
 ## Honest limits
-- **Every 5 minutes, not tick-by-tick.** GitHub's scheduler sometimes starts runs 5–15 minutes late at busy times. It's built for trades held minutes to days, not scalping.
-- **Free data**: stock prices come from the IEX exchange only, and option quotes are Alpaca's delayed *indicative* feed.
-- **Backtest = direction, not option profits.** It shows what the stock did after each historical signal. Option results depend on time decay and implied volatility, which free data can't replay.
-- **Cost:** $0 as long as this repository stays **public**, because GitHub Actions is free for public repos. Your keys and topic are stored as encrypted secrets and are never visible. If you make the repo private, change the schedule to `*/15` to stay inside the free 2,000 minutes a month.
+- **About a minute, not instant.** Alerts come about 1–4 minutes after a setup forms: the minute bar has to close, then the score has to hold for 3 minutes. Breaking news is re-scored within seconds. Set `live.confirm_cycles: 1` for faster but noisier signals.
+- **Free data**: stock prices come from the IEX exchange only, at most 30 streamed symbols at a time. Option quotes are Alpaca's delayed *indicative* feed.
+- **Backtest = direction, not option profits.** It shows what the stock did after each historical signal.
+- **Oracle's idle rule**: Oracle says it may reclaim Always Free servers that stay very idle for 7 days. If yours is ever stopped, start it again from the console. If it's deleted, create a new one with the same setup script (about 10 minutes).
 
 ## Files
 ```
 config.yaml                    ← your settings
+signal_agent/live.py           ← always-on server mode: websockets, 1-minute scheduler, REST fallback
 signal_agent/agent.py          ← scan cycle: universe → scores → exits → entries → recap
 signal_agent/strategy.py       ← chart score, news/chart blend, entry rules
 signal_agent/indicators.py     ← EMA, RSI, MACD, VWAP, ATR, relative volume, daily trend
@@ -99,6 +82,7 @@ signal_agent/options.py        ← contract selection and sizing
 signal_agent/backtest.py       ← historical test
 signal_agent/alpaca.py         ← Alpaca REST client
 signal_agent/notify.py         ← ntfy push
-.github/workflows/signals.yml  ← schedule
+deploy/                        ← install.sh, systemd service, auto-update
+.github/workflows/signals.yml  ← on-demand backtest + tests
 tests/                         ← offline tests with simulated market data
 ```
