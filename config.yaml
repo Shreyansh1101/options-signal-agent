@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────
+#  Options Signal Agent — settings
+#  You can edit this file right on GitHub (pencil icon) from your phone.
+#  Changes take effect on the next run (within ~5 minutes).
+# ─────────────────────────────────────────────────────────────
+
+# What to watch
+universe:
+  always_watch: [SPY, QQQ, IWM]      # always scanned
+  watchlist: []                      # add your own, e.g. [AAPL, NVDA, TSLA]
+  scanner_most_active: 25            # top N most-active stocks (by volume) from Alpaca's screener
+  scanner_movers: 15                 # top N gainers + top N losers
+  max_symbols: 30                    # cap per scan (keeps runs fast and inside free API limits)
+  min_price: 10                      # skip stocks below this (options too thin / wide)
+  max_price: 1500
+  exclude: [TQQQ, SQQQ, SOXL, SOXS, UVXY, UVIX, SVXY, TSLL, TSLZ, NVDL, NVDS, SPXL, SPXS, TNA, TZA, LABU, LABD, FNGU, FNGD, BITX, MSTU, MSTZ]
+
+# When new BUY signals are allowed (New York time)
+trading_window:
+  start: "09:45"                     # skip the chaotic first 15 minutes
+  end: "15:30"                       # no new entries in the last 30 minutes
+
+# How signals are scored (each part is -1 … +1; + = bullish, - = bearish)
+scoring:
+  chart_weight: 0.6
+  news_weight: 0.4
+  no_news_factor: 0.85               # with no recent news, the chart alone must be stronger
+  entry_threshold: 0.55              # |score| needed for a BUY CALL (+) or BUY PUT (-)
+  confirm_cycles: 2                  # score must clear the bar on this many scans in a row
+  news_veto: 0.25                    # block a trade if news points the other way by more than this
+  min_relative_volume: 1.0           # recent volume vs normal for that time of day
+  market_filter: true                # penalise trades that fight a strong SPY trend
+  news_lookback_hours: 24
+  news_half_life_hours: 6            # older headlines count less
+
+# Which option contract to suggest
+contracts:
+  min_days_to_expiry: 3              # no 0–2 DTE lottery tickets by default
+  target_days_to_expiry: 10
+  max_days_to_expiry: 30
+  min_delta: 0.35
+  max_delta: 0.65
+  max_spread_pct: 0.12               # (ask - bid) / mid
+  min_premium: 0.30                  # per share
+  max_premium: 10.00                 # per share  (1 contract = 100 shares → $1,000)
+
+# Risk plan attached to every signal
+risk:
+  risk_per_trade_usd: 100            # how much you're willing to lose per trade → sets suggested contract count
+  stop_loss_pct: 0.35                # SELL if the option loses 35%
+  take_profit_pct: 0.60              # SELL if the option gains 60%
+  breakeven_after_pct: 0.30          # once up 30%, the stop moves to your entry price
+  flip_exit_score: 0.35              # SELL if the score flips this far the other way
+  max_hold_days: 5                   # SELL after this many trading days regardless
+  max_open_signals: 5
+  cooldown_minutes: 90               # don't re-signal the same stock too quickly
+
+# Optional: Claude reads the headlines instead of the built-in keyword model.
+# Costs a few cents a day via the Anthropic API — leave false to stay 100% free.
+claude_news:
+  enabled: false
+  model: claude-haiku-5-5
+
+notifications:
+  daily_summary: true                # end-of-day recap + running track record
+  quiet_skips: true                  # don't notify when a signal was found but no good contract existed
