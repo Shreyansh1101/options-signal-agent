@@ -163,9 +163,10 @@ def trading_minutes(now: datetime, close: datetime) -> float:
     return total
 
 
-def prob_yes(m: dict, S: float, sigma: float, minutes: float) -> float | None:
-    """Lognormal (zero-drift) probability that the market resolves YES."""
-    T = max(minutes, 0.5) / (390 * 252)
+def prob_yes(m: dict, S: float, sigma: float, minutes: float, year_minutes: float = 390 * 252) -> float | None:
+    """Lognormal (zero-drift) probability that the market resolves YES.
+    `year_minutes`: 390×252 for stock-market time, 525,600 for 24/7 crypto."""
+    T = max(minutes, 0.5) / year_minutes
     sd = max(sigma * math.sqrt(T), 0.0004)              # never assume less than ~0.04% of movement
     below = lambda K: ncdf((math.log(K / S) + 0.5 * sd * sd) / sd)
     st, lo, hi = m["strike_type"], m["floor"], m["cap"]
@@ -206,6 +207,48 @@ def realized_vol(bars5: pd.DataFrame | None) -> float | None:
     if len(r) < 30:
         return None
     return float(r.std() * math.sqrt(78 * 252))
+
+
+class CryptoPrices:
+    """Spot price + realised volatility from Coinbase's public API (one of the exchanges in CF Benchmarks' index)."""
+    BASE = os.environ.get("COINBASE_API", "https://api.exchange.coinbase.com")
+
+    def __init__(self, session: requests.Session | None = None):
+        self.s = session or requests.Session()
+        self._px: dict[str, tuple[float, float]] = {}
+        self._vol: dict[str, tuple[float, float]] = {}
+
+    def price(self, coin: str) -> float | None:
+        hit = self._px.get(coin)
+        if hit and time.time() - hit[0] < 10:
+            return hit[1]
+        try:
+            r = self.s.get(f"{self.BASE}/products/{coin}-USD/ticker", timeout=10)
+            r.raise_for_status()
+            p = float(r.json()["price"])
+        except Exception as e:
+            print(f"[crypto] {coin} price failed: {e!r}")
+            return None
+        self._px[coin] = (time.time(), p)
+        return p
+
+    def vol(self, coin: str) -> float | None:
+        """Annualised volatility from the last ~5 hours of 1-minute candles."""
+        hit = self._vol.get(coin)
+        if hit and time.time() - hit[0] < 600:
+            return hit[1]
+        try:
+            r = self.s.get(f"{self.BASE}/products/{coin}-USD/candles", params={"granularity": 60}, timeout=10)
+            r.raise_for_status()
+            closes = [c[4] for c in sorted(r.json(), key=lambda c: c[0])]
+            rets = np.diff(np.log(closes))
+            v = float(np.std(rets) * math.sqrt(525600)) if len(rets) > 60 else None
+        except Exception as e:
+            print(f"[crypto] {coin} vol failed: {e!r}")
+            return None
+        if v:
+            self._vol[coin] = (time.time(), v)
+        return v
 
 
 # ─────────────────────────────────────────────────────────────
@@ -279,6 +322,15 @@ class KalshiEngine:
         self._last: dict[str, float] = {}
         self._ratio: dict[str, tuple[str, float]] = {}
         self._vol: dict[str, tuple[float, float]] = {}
+        self.crypto = CryptoPrices()
+        self._index_fair: dict[str, float] = {}
+        self._crypto_fair: dict[str, float] = {}
+        self.stats = {"errors": [], "last": {}}
+
+    def _err(self, where: str, e: Exception) -> None:
+        msg = f"{self.now().astimezone(ET):%H:%M} {where}: {e!r}"[:200]
+        print(f"[kalshi] {msg}")
+        self.stats["errors"] = (self.stats["errors"] + [msg])[-5:]
 
     # state ---------------------------------------------------
     def _load(self) -> dict:
@@ -326,22 +378,29 @@ class KalshiEngine:
                 if self.k["mispricing"]["enabled"]:
                     done += self.scan_mispricing()
             except Exception as e:
-                print(f"[kalshi] universe refresh failed: {e!r}")
+                self._err("universe", e)
         if market_open and self.k["index"]["enabled"] and self._due("index", 55):
             try:
                 done += self.scan_index()
             except Exception as e:
-                print(f"[kalshi] index scan failed: {e!r}")
+                self._err("index", e)
+        if self.k.get("crypto", {}).get("enabled") and self._due("crypto", 30):
+            try:
+                done += self.scan_crypto()
+            except Exception as e:
+                self._err("crypto", e)
         if self.k["news"]["enabled"] and self.universe and self._due("news", 900):
             try:
                 done += self.scan_news()
             except Exception as e:
-                print(f"[kalshi] news scan failed: {e!r}")
+                self._err("news", e)
         if self.st["open"] and self._due("exits", 55):
             try:
                 done += self.manage_open()
             except Exception as e:
-                print(f"[kalshi] exits failed: {e!r}")
+                self._err("exits", e)
+        for d in done:
+            self.stats["last"][d.split(" ")[0]] = f"{self.now().astimezone(ET):%a %H:%M} {d}"[:120]
         self.maybe_recap()
         self.save()
         return done
@@ -401,7 +460,7 @@ class KalshiEngine:
                *why,
                f"Ticker: {m['ticker']}",
                "Check the live price in the Kalshi app before buying."]
-        tag = {"index": "📈", "news": "📰"}.get(kind, "🎯")
+        tag = {"index": "📈", "news": "📰", "crypto": "₿"}.get(kind, "🎯")
         push(self.secrets, f"{tag} KALSHI BUY {side.upper()} · {m['sub'][:60]}", "\n".join(msg),
              tags=["dart"], priority=5, click=self.link(m),
              actions=[{"action": "view", "label": "Open in Kalshi", "url": self.link(m)}])
@@ -517,6 +576,62 @@ class KalshiEngine:
                     self._open_signal("index", m, side, ask, fair, why, {"proxy": proxy})
                     done.append(f"index {side} {m['ticker']} edge {edge:.2f}")
         self._index_fair = fair_cache
+        return done
+
+    # 1b) crypto fair value (24/7) ----------------------------
+    def scan_crypto(self) -> list[str]:
+        cx = self.k["crypto"]
+        now = self.now()
+        done, fair_cache = [], {}
+        open_tickers = {s["ticker"] for s in self.st["open"].values()}
+        for series, coin in cx["series"].items():
+            try:
+                evs = self.client.events(series, status="open", limit=6)
+            except Exception:
+                continue
+            if not evs:
+                continue
+            S = self.crypto.price(coin)
+            vol = self.crypto.vol(coin)
+            if not S or not vol:
+                continue
+            sigma = max(vol, cx["min_vol"]) * cx["tail_factor"]
+            for e in evs:
+                best = None
+                for raw in e.get("markets") or []:
+                    m = norm_market(raw, e)
+                    if not m["close"] or m["status"] not in ("active", "open", ""):
+                        continue
+                    mins = (m["close"] - now).total_seconds() / 60
+                    if mins < cx["min_minutes_left"] or mins > cx["max_minutes"]:
+                        continue
+                    p = prob_yes(m, S, sigma, mins, 525600)
+                    if p is None:
+                        continue
+                    fair_cache[m["ticker"]] = p
+                    if m["ticker"] in open_tickers or self._cool(m["ticker"]):
+                        continue
+                    for side, fair, ask, size in (("yes", p, m["yes_ask"], m["yes_ask_size"]),
+                                                  ("no", 1 - p, m["no_ask"], m["yes_bid_size"])):
+                        if not (0.03 <= ask <= 0.97) or (m["yes_ask"] - m["yes_bid"]) > cx["max_spread"]:
+                            continue
+                        if size and size < cx["min_size"]:
+                            continue
+                        edge = fair - ask - fee_per_contract(ask, self.coef(m))
+                        if edge >= cx["min_edge"] and (best is None or edge > best[0]):
+                            best = (edge, m, side, ask, fair, mins)
+                hour_ago = (now - timedelta(hours=1)).isoformat()
+                recent = sum(1 for x in list(self.st["open"].values()) + self.st["closed"][-50:]
+                             if x["kind"] == "crypto" and x["opened"] >= hour_ago)
+                if best and len(self.st["open"]) < self.k["risk"]["max_open"] and recent < cx.get("max_per_hour", 3):
+                    edge, m, side, ask, fair, mins = best
+                    why = [f"{coin} now ${S:,.2f} (Coinbase) · vol {sigma * 100:.0f}%/yr · {mins:.0f} min left",
+                           "Settles on the CF Benchmarks 60-second average — small differences from Coinbase are normal."]
+                    self._open_signal("crypto", m, side, ask, fair, why, {"coin": coin})
+                    open_tickers.add(m["ticker"])
+                    done.append(f"crypto {side} {m['ticker']} edge {edge:.2f}")
+        self._crypto_fair = fair_cache
+        self.stats["crypto_markets"] = len(fair_cache)
         return done
 
     # 2) news / AI forecasts ----------------------------------
@@ -689,8 +804,8 @@ class KalshiEngine:
                 continue
             bid = m[side + "_bid"]
             fair = s.get("fair")
-            if s["kind"] == "index":
-                p = getattr(self, "_index_fair", {}).get(s["ticker"])
+            if s["kind"] in ("index", "crypto"):
+                p = (self._index_fair if s["kind"] == "index" else self._crypto_fair).get(s["ticker"])
                 if p is not None:
                     fair = p if side == "yes" else 1 - p
                     s["fair"] = round(fair, 3)
@@ -729,6 +844,25 @@ class KalshiEngine:
         self.st["closed"].append(s)
         del self.st["open"][sid]
 
+    def status_text(self) -> str:
+        day = self.now().astimezone(ET).date().isoformat()
+        cands = sum(1 for m in self.universe.values() if self._news_candidate(m))
+        cats: dict[str, int] = {}
+        for m in self.universe.values():
+            c = self.category(m) or "?"
+            cats[c] = cats.get(c, 0) + 1
+        top = ", ".join(f"{k} {v}" for k, v in sorted(cats.items(), key=lambda kv: -kv[1])[:6])
+        lines = [f"Markets loaded: {len(self.universe):,} ({top})",
+                 f"News candidates: {cands} · Claude analyses today {self.st['budget'].get(day, 0)}/"
+                 f"{self.k['news']['max_analyses_per_day']} · key {'connected' if get_anthropic_key(self.secrets) else 'MISSING'}",
+                 f"Crypto contracts priced: {self.stats.get('crypto_markets', 0)} · index contracts priced: {len(self._index_fair)}",
+                 f"Open Kalshi signals: {len(self.st['open'])} · closed so far: {len(self.st['closed'])}"]
+        if self.stats["last"]:
+            lines.append("Recent: " + " | ".join(list(self.stats["last"].values())[-4:]))
+        if self.stats["errors"]:
+            lines.append("Errors: " + " | ".join(self.stats["errors"][-3:]))
+        return "\n".join(lines)
+
     # recap ---------------------------------------------------
     def maybe_recap(self) -> None:
         now_et = self.now().astimezone(ET)
@@ -740,8 +874,6 @@ class KalshiEngine:
                   datetime.fromisoformat(c["closed"]).astimezone(ET).date().isoformat() == day]
         opened = [c for c in list(self.st["open"].values()) + self.st["closed"]
                   if datetime.fromisoformat(c["opened"]).astimezone(ET).date().isoformat() == day]
-        if not closed and not opened and not self.st["open"]:
-            return
         allc = [c["pnl"] for c in self.st["closed"] if c.get("pnl") is not None]
         lines = [f"New: {len(opened)} · closed: {len(closed)} · still open: {len(self.st['open'])}"]
         lines += [f"  {c['title'][-45:]} {c['side'].upper()}: {c['pnl'] * 100:+.0f}¢ ({c['reason'][:30]})" for c in closed]
@@ -750,4 +882,5 @@ class KalshiEngine:
             lines.append(f"Track record: {len(allc)} signals · win rate {wins / len(allc) * 100:.0f}% · "
                          f"avg {sum(allc) / len(allc) * 100:+.1f}¢/contract")
         lines.append(f"Claude analyses used today: {self.st['budget'].get(day, 0)}/{self.k['news']['max_analyses_per_day']}")
+        lines.append(f"Watching {len(self.universe):,} Kalshi markets · {self.stats.get('crypto_markets', 0)} crypto contracts priced")
         push(self.secrets, f"📊 Kalshi recap · {now_et:%a %b %d}", "\n".join(lines), tags=["bar_chart"], priority=2)

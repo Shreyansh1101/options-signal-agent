@@ -242,6 +242,8 @@ def poll_commands(secrets: Secrets) -> list[str]:
             settings.pop("telegram_chat_id", None)
             done.append("telegram off")
             _ntfy_only(secrets, "Telegram alerts turned off", "Alerts will only go to ntfy.")
+        elif text.lower() in {"status", "/status"}:
+            done.append("status")
         elif text.lower() in {"telegram test", "test"}:
             ok = _telegram(secrets, "🔔 Test alert", "If you see this on your lock screen, alerts are working.", 4, None)
             done.append("test sent" if ok else "test failed")

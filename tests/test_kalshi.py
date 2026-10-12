@@ -265,3 +265,53 @@ class TestClaudeParsing(unittest.TestCase):
         sent = post.call_args.kwargs["json"]
         self.assertEqual(sent["tools"][0]["name"], "web_search")
         self.assertEqual(sent["model"], "claude-haiku-5-5")
+
+
+class FakeCrypto:
+    def price(self, coin): return 82000.0 if coin == "BTC" else None
+    def vol(self, coin): return 0.45 if coin == "BTC" else None
+
+
+class CryptoKalshi(FakeKalshi):
+    def __init__(self, yb, ya):
+        super().__init__([])
+        close = (NOW + timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        self.btc = mk("KXBTC15M-26OCT131415-15", "KXBTC15M-26OCT131415", "Target Price: $82,000.00",
+                      "greater_or_equal", 82000.0, None, yb, ya, close=close)
+
+    def events(self, series, status="open", limit=20):
+        if series == "KXBTC15M" and status == "open":
+            return [{"event_ticker": "KXBTC15M-26OCT131415", "series_ticker": "KXBTC15M",
+                     "title": "BTC Up or Down - 15 minutes", "markets": [self.btc]}]
+        return []
+
+    def markets(self, tickers):
+        return [self.btc] if self.btc["ticker"] in tickers else []
+
+
+class TestCrypto(Base):
+    def test_cheap_up_contract_signals_and_fair_one_does_not(self):
+        e = self.engine(CryptoKalshi(0.49, 0.51))
+        e.crypto = FakeCrypto()
+        self.assertEqual(e.scan_crypto(), [])                         # at-the-money ≈ 50% → fair
+        fk = CryptoKalshi(0.30, 0.32)
+        e2 = self.engine(fk)
+        e2.crypto = FakeCrypto()
+        out = e2.scan_crypto()
+        self.assertEqual(len(out), 1, out)
+        sig = next(iter(e2.st["open"].values()))
+        self.assertEqual((sig["kind"], sig["side"], sig["entry"]), ("crypto", "yes", 0.32))
+        self.assertAlmostEqual(sig["fair"], 0.5, delta=0.02)
+        self.assertTrue(any(n["title"].startswith("₿ KALSHI BUY YES") for n in notify.SENT))
+        # market reprices to fair → exit
+        fk.btc.update({"yes_bid_dollars": "0.5000", "yes_ask_dollars": "0.5100"})
+        e2.scan_crypto()
+        self.assertEqual(e2.manage_open(), [f"exit {sig['ticker']}"])
+
+    def test_status_text(self):
+        e = self.engine(CryptoKalshi(0.49, 0.51))
+        e.crypto = FakeCrypto()
+        e.scan_crypto()
+        txt = e.status_text()
+        self.assertIn("Crypto contracts priced: 1", txt)
+        self.assertIn("key MISSING", txt)

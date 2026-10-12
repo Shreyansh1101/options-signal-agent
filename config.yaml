@@ -88,6 +88,20 @@ kalshi:
     min_size: 5
     tail_factor: 1.15                # widen volatility so tails aren't under-priced
 
+  crypto:                            # BTC/ETH/SOL/XRP/DOGE… 15-minute, hourly and daily price markets (free, no AI)
+    enabled: true
+    series: {KXBTC15M: BTC, KXBTCD: BTC, KXBTC: BTC, KXETH15M: ETH, KXETHD: ETH, KXETH: ETH, ETH: ETH,
+             KXSOL15M: SOL, KXSOLD: SOL, KXXRP15M: XRP, KXXRP: XRP, KXRIPPLE: XRP, KXRIPPLED: XRP,
+             KXDOGE15M: DOGE, KXDOGED: DOGE, KXLTC: LTC, KXXLM: XLM, KXXLMD: XLM, KXNEAR15M: NEAR, KXNEARH: NEAR}
+    min_edge: 0.06                   # per contract after fees
+    min_minutes_left: 3
+    max_minutes: 1440                # contracts settling within 24 hours
+    max_spread: 0.05
+    min_size: 20
+    min_vol: 0.25                    # never assume less than 25%/yr volatility
+    tail_factor: 1.2
+    max_per_hour: 3                  # at most 3 crypto BUY alerts per hour
+
   news:                              # Claude reads the news (web search) and estimates the odds
     enabled: true
     model: claude-haiku-5-5

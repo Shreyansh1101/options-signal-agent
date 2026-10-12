@@ -436,10 +436,23 @@ class Runner:
             self.kalshi_loop(),
         )
 
+    def send_status(self) -> None:
+        last = self.st.get("last_scan")
+        last_txt = datetime.fromisoformat(last).astimezone(ET).strftime("%a %I:%M %p") if last else "not yet"
+        ok = self.live.stream_ok
+        lines = ["OPTIONS",
+                 f"Last scan: {last_txt} ET · watching {len(self.live.universe)} stocks",
+                 f"Price stream {'on' if ok['stocks'] else 'reconnecting'} · news stream {'on' if ok['news'] else 'reconnecting'}",
+                 f"Open option signals: {len(self.st['open'])} · closed: {len(self.st['closed'])}"]
+        eng = getattr(self, "kalshi", None)
+        lines += ["", "KALSHI", eng.status_text() if eng else "starting…"]
+        push(self.secrets, "📋 Agent status", "\n".join(lines), tags=["clipboard"], priority=3)
+
     async def kalshi_loop(self) -> None:
         """Kalshi signals run 24/7 (index markets only while the stock market is open)."""
         from .kalshi import KalshiEngine
         eng = KalshiEngine(self.cfg, self.secrets, self.live, now_fn=self.now)
+        self.kalshi = eng
         await asyncio.sleep(20)                    # let the price stream warm up
         while True:
             try:
@@ -460,6 +473,8 @@ class Runner:
         while True:
             try:
                 done = await asyncio.to_thread(poll_commands, self.secrets)
+                if "status" in done:
+                    await asyncio.to_thread(self.send_status)
                 if done:
                     log(f"[commands] {', '.join(done)}")
             except Exception as e:
