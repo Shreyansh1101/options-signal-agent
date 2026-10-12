@@ -50,6 +50,15 @@ ntfy's iPhone banners can be unreliable, so the agent can also send every alert 
 
 Other commands you can publish to your topic: `test` (sends a test alert) and `telegram off`.
 
+### Kalshi signals
+The same server also watches Kalshi (read-only; you place trades in the Kalshi app):
+- **Index fair value:** S&P 500 / Nasdaq-100 range and threshold markets are priced from the live index (SPY/QQQ × a ratio calibrated on Kalshi's last settlement) and volatility. An alert fires when a contract is at least 6¢ cheaper than fair value after fees.
+- **News forecasts (Claude):** economics/Fed, politics, world and sports markets. Claude searches the news and estimates the odds. Its estimate is blended with the market price (it's never fully trusted), and at most `max_analyses_per_day` analyses run per day to cap cost.
+- **Mispricing scanner:** mutually exclusive events whose prices don't add up.
+- Every signal gets SELL alerts (edge captured, take profit, stop, thesis changed) and a SETTLED alert, plus a nightly Kalshi recap at 8 PM.
+
+To turn on the Claude forecasts, publish `claude <your Anthropic API key>` to your ntfy topic (`claude off` disables them).
+
 ### Reading an alert
 ```
 BUY CALL · NVDA  (score +0.71)

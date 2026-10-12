@@ -20,6 +20,7 @@ from .config import Secrets
 
 SENT: list[dict] = []  # everything sent this run (used by tests and the run summary)
 TG_API = os.environ.get("TELEGRAM_API", "https://api.telegram.org")
+ANTHROPIC_RX = re.compile(r"^\s*(?:claude|anthropic)\s+(sk-ant-[A-Za-z0-9_\-]{20,})\s*$", re.I)
 TOKEN_RX = re.compile(r"^\s*telegram\s+(\d{5,}:[A-Za-z0-9_-]{30,})\s*$", re.I)
 
 
@@ -44,6 +45,23 @@ def save_settings(s: dict) -> None:
     tmp.write_text(json.dumps(s))
     os.chmod(tmp, 0o600)
     tmp.replace(p)
+
+
+def get_anthropic_key(secrets: Secrets) -> str:
+    return (getattr(secrets, "anthropic_key", "") or "").strip() or load_settings().get("anthropic_key", "")
+
+
+def anthropic_key_ok(key: str) -> bool | None:
+    try:
+        r = requests.get("https://api.anthropic.com/v1/models",
+                         headers={"x-api-key": key, "anthropic-version": "2023-06-01"}, timeout=15)
+        if r.status_code in (401, 403):
+            return False
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[claude] key check failed: {e}")
+        return None
 
 
 # ── Telegram ─────────────────────────────────────────────────
@@ -200,6 +218,25 @@ def poll_commands(secrets: Secrets) -> list[str]:
                 _ntfy_only(secrets, "⚠️ Telegram: almost there",
                            "Got your bot key, but no message to the bot yet. Open your bot in Telegram and send it "
                            "'hi' — it will connect automatically within a minute.")
+        elif ANTHROPIC_RX.match(text):
+            key = ANTHROPIC_RX.match(text).group(1)
+            ok = anthropic_key_ok(key)
+            if ok is False:
+                done.append("claude key rejected")
+                push(secrets, "⚠️ Claude key not accepted",
+                     "Anthropic rejected that API key. Copy it again from console.anthropic.com → API Keys "
+                     "and send 'claude <key>' here.", priority=4)
+            else:
+                settings["anthropic_key"] = key
+                save_settings(settings)
+                done.append("claude connected")
+                push(secrets, "✅ Claude connected",
+                     "Kalshi news forecasts are on. Tip: set a monthly spend limit in the Anthropic console.",
+                     priority=3)
+        elif text.lower() in {"claude off", "anthropic off"}:
+            settings.pop("anthropic_key", None)
+            done.append("claude off")
+            push(secrets, "Claude forecasts turned off", "Kalshi will use index math and the mispricing scanner only.")
         elif text.lower() in {"telegram off", "telegram stop"}:
             settings.pop("telegram_token", None)
             settings.pop("telegram_chat_id", None)

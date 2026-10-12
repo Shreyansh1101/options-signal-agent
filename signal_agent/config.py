@@ -56,6 +56,23 @@ DEFAULTS: dict = {
     "claude_news": {"enabled": False, "model": "claude-haiku-5-5"},
     "live": {"confirm_cycles": 3, "rescan_on_news": True, "morning_check": True},
     "notifications": {"daily_summary": True, "quiet_skips": True},
+    "kalshi": {
+        "enabled": True, "categories": ["Economics", "Politics", "Elections", "World", "Sports"], "max_pages": 40,
+        "index": {"enabled": True,
+                  "series": {"KXINX": "SPY", "KXINXU": "SPY", "KXINXI": "SPY",
+                             "KXNASDAQ100": "QQQ", "KXNASDAQ100U": "QQQ", "KXNASDAQ100I": "QQQ"},
+                  "ratio_series": {"SPY": "KXINX", "QQQ": "KXNASDAQ100"},
+                  "ratio_bounds": {"SPY": [9.0, 11.5], "QQQ": [35, 50]},
+                  "min_edge": 0.06, "min_minutes_left": 20, "max_trading_minutes": 1170,
+                  "max_spread": 0.06, "min_size": 5, "tail_factor": 1.15},
+        "news": {"enabled": True, "model": "claude-haiku-5-5", "web_search": True, "max_analyses_per_day": 8,
+                 "min_edge": 0.06, "shrink": {"high": 0.6, "medium": 0.4, "low": 0.0}, "min_volume_24h": 500,
+                 "max_spread": 0.05, "min_hours_to_close": 2, "max_days_to_close": 30, "sports_max_days": 3,
+                 "reanalyze_hours": 12, "reanalyze_move": 0.06},
+        "mispricing": {"enabled": True, "min_profit": 0.02, "min_size": 10},
+        "risk": {"risk_per_trade_usd": 25, "max_contracts": 100, "max_open": 6, "take_profit": 0.20,
+                 "stop_loss": 0.25, "thesis_stop": 0.08, "cooldown_minutes": 120},
+    },
 }
 
 

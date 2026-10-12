@@ -68,6 +68,55 @@ live:
   rescan_on_news: true               # breaking headline on a watched stock → re-score within seconds
   morning_check: true                # 9:20 AM "ready for the open" notification
 
+# ─────────────────────────────────────────────────────────────
+#  Kalshi prediction-market signals (read-only — you place trades in the Kalshi app)
+# ─────────────────────────────────────────────────────────────
+kalshi:
+  enabled: true
+  categories: [Economics, Politics, Elections, World, Sports]   # for the Claude news forecasts
+  max_pages: 40                      # how much of Kalshi's market list to scan (1,000 markets per page)
+
+  index:                             # S&P 500 / Nasdaq-100 fair-value model (free, no AI)
+    enabled: true
+    series: {KXINX: SPY, KXINXU: SPY, KXINXI: SPY, KXNASDAQ100: QQQ, KXNASDAQ100U: QQQ, KXNASDAQ100I: QQQ}
+    ratio_series: {SPY: KXINX, QQQ: KXNASDAQ100}     # daily series whose settlement calibrates index ÷ ETF
+    ratio_bounds: {SPY: [9.0, 11.5], QQQ: [35, 50]}
+    min_edge: 0.06                   # dollars per contract after fees (6¢)
+    min_minutes_left: 20
+    max_trading_minutes: 1170        # up to ~3 trading days ahead
+    max_spread: 0.06
+    min_size: 5
+    tail_factor: 1.15                # widen volatility so tails aren't under-priced
+
+  news:                              # Claude reads the news (web search) and estimates the odds
+    enabled: true
+    model: claude-haiku-5-5
+    web_search: true
+    max_analyses_per_day: 8          # ≈ 1–4¢ each → caps spend at roughly $0.30/day
+    min_edge: 0.06
+    shrink: {high: 0.6, medium: 0.4, low: 0.0}   # how far to trust Claude vs the market price
+    min_volume_24h: 500
+    max_spread: 0.05
+    min_hours_to_close: 2
+    max_days_to_close: 30
+    sports_max_days: 3
+    reanalyze_hours: 12
+    reanalyze_move: 0.06
+
+  mispricing:
+    enabled: true
+    min_profit: 0.02                 # per set of contracts, after fees
+    min_size: 10
+
+  risk:
+    risk_per_trade_usd: 25           # max you'd lose per signal (sets the contract count)
+    max_contracts: 100
+    max_open: 6
+    take_profit: 0.20                # sell when up 20¢ per contract
+    stop_loss: 0.25                  # sell when down 25¢ per contract
+    thesis_stop: 0.08                # sell if fair value drops 8¢ below your entry
+    cooldown_minutes: 120
+
 notifications:
   daily_summary: true                # end-of-day recap + running track record
   quiet_skips: true                  # don't notify when a signal was found but no good contract existed

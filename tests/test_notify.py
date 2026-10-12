@@ -111,6 +111,17 @@ class TestTelegram(unittest.TestCase):
         self.assertEqual(self.run_with(http, notify.poll_commands, self.sec), ["telegram connected (late)"])
         self.assertEqual(notify.load_settings()["telegram_chat_id"], 555)
 
+    def test_claude_key_command(self):
+        http = FakeHTTP([{"event": "message", "id": "c1", "message": "claude sk-ant-api03-" + "a" * 40}])
+        with mock.patch.object(notify, "anthropic_key_ok", return_value=True):
+            done = self.run_with(http, notify.poll_commands, self.sec)
+        self.assertEqual(done, ["claude connected"])
+        self.assertTrue(notify.get_anthropic_key(self.sec).startswith("sk-ant-api03-"))
+        with mock.patch.object(notify, "anthropic_key_ok", return_value=False):
+            http2 = FakeHTTP([{"event": "message", "id": "c2", "message": "claude sk-ant-api03-" + "b" * 40}])
+            self.assertEqual(self.run_with(http2, notify.poll_commands, self.sec), ["claude key rejected"])
+        self.assertTrue(notify.get_anthropic_key(self.sec).endswith("a" * 40))   # bad key didn't overwrite
+
     def test_off(self):
         notify.save_settings({"telegram_token": TOKEN, "telegram_chat_id": 1})
         http = FakeHTTP([{"event": "message", "id": "q", "message": "telegram off"}])

@@ -433,7 +433,27 @@ class Runner:
             news_stream(self.secrets, self.live, self.on_news),
             self.scheduler(),
             self.command_loop(),
+            self.kalshi_loop(),
         )
+
+    async def kalshi_loop(self) -> None:
+        """Kalshi signals run 24/7 (index markets only while the stock market is open)."""
+        from .kalshi import KalshiEngine
+        eng = KalshiEngine(self.cfg, self.secrets, self.live, now_fn=self.now)
+        await asyncio.sleep(20)                    # let the price stream warm up
+        while True:
+            try:
+                eng.cfg, eng.k = self.cfg, self.cfg["kalshi"]      # pick up config.yaml edits
+                try:
+                    is_open = bool((await asyncio.to_thread(self.live.clock)).get("is_open"))
+                except Exception:
+                    is_open = False                # Alpaca hiccup shouldn't stop non-index Kalshi signals
+                done = await asyncio.to_thread(eng.tick, is_open)
+                if done:
+                    log("[kalshi] " + "; ".join(done))
+            except Exception as e:
+                log(f"[kalshi] {e!r}")
+            await asyncio.sleep(30)
 
     async def command_loop(self) -> None:
         """Every 30s: check the ntfy topic for setup commands (e.g. 'telegram <bot key>')."""
