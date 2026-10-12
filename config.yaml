@@ -13,7 +13,8 @@ universe:
   max_symbols: 30                    # cap per scan (keeps runs fast and inside free API limits)
   min_price: 10                      # skip stocks below this (options too thin / wide)
   max_price: 1500
-  exclude: [TQQQ, SQQQ, SOXL, SOXS, UVXY, UVIX, SVXY, TSLL, TSLZ, NVDL, NVDS, SPXL, SPXS, TNA, TZA, LABU, LABD, FNGU, FNGD, BITX, MSTU, MSTZ]
+  # leveraged / inverse ETFs — options on these are poor fits for these signals
+  exclude: [TQQQ, SQQQ, SOXL, SOXS, UVXY, UVIX, SVXY, VXX, TSLL, TSLZ, TSLQ, TSLT, NVDL, NVDS, NVDX, NVDU, NVDD, NVDQ, SPXL, SPXS, SPXU, SDS, SSO, UPRO, QLD, QID, TNA, TZA, LABU, LABD, FNGU, FNGD, BITX, BITU, SBIT, MSTU, MSTZ, MSTX, CONL, AMDL, PLTU, METU, AAPU, GGLL, AMZU, MSFU, SNXX, YINN, YANG, NUGT, DUST, JNUG, JDST, BOIL, KOLD, UCO, SCO, TMF, TMV, ETHU]
 
 # When new BUY signals are allowed (New York time)
 trading_window:
