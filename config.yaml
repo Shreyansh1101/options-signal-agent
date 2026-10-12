@@ -56,10 +56,10 @@ risk:
   max_open_signals: 5
   cooldown_minutes: 90               # don't re-signal the same stock too quickly
 
-# Optional: Claude reads the headlines instead of the built-in keyword model.
-# Costs a few cents a day via the Anthropic API — leave false to stay 100% free.
+# Claude scores stock headlines instead of the built-in keyword model (uses the key you connected
+# with 'claude <key>'; costs well under $1/month). Falls back to the keyword model if anything fails.
 claude_news:
-  enabled: false
+  enabled: true
   model: claude-haiku-5-5
 
 # Live mode (always-on server): streams prices + news and re-scores every minute

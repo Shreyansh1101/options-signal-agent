@@ -1,7 +1,7 @@
 """News sentiment.
 
 Default: a free finance-tuned phrase model (no API costs).
-Optional: Claude scores headlines (set claude_news.enabled + ANTHROPIC_API_KEY).
+Claude scores headlines when claude_news.enabled and an Anthropic key is connected (keyword model is the fallback).
 """
 from __future__ import annotations
 
@@ -10,7 +10,11 @@ import math
 import re
 from datetime import datetime, timezone
 
+import time
+
 import requests
+
+_CLAUDE_PAUSED_UNTIL = 0.0
 
 # (pattern, weight). Phrases are matched before single words; weights in [-1, 1].
 PHRASES: list[tuple[str, float]] = [
@@ -133,6 +137,9 @@ def symbol_news_scores(articles: list[dict], symbols: list[str], now: datetime |
 
 def claude_score_articles(articles: list[dict], api_key: str, model: str, cache: dict) -> int:
     """Score uncached articles with Claude; writes into `cache` (id -> score). Returns #scored."""
+    global _CLAUDE_PAUSED_UNTIL
+    if time.time() < _CLAUDE_PAUSED_UNTIL:
+        return 0
     todo = [a for a in articles if str(a.get("id")) not in cache][:60]
     if not todo or not api_key:
         return 0
@@ -153,8 +160,9 @@ def claude_score_articles(articles: list[dict], api_key: str, model: str, cache:
         r.raise_for_status()
         text = "".join(b.get("text", "") for b in r.json().get("content", []))
         data = json.loads(text[text.index("{"): text.rindex("}") + 1])
-    except Exception as e:  # fall back silently to the keyword model
-        print(f"[news] Claude scoring failed, using keyword model: {e}")
+    except Exception as e:  # fall back to the keyword model; pause so a persistent error doesn't retry every minute
+        print(f"[news] Claude scoring failed, using keyword model for 10 min: {e}")
+        _CLAUDE_PAUSED_UNTIL = time.time() + 600
         return 0
     n = 0
     for k, v in data.items():

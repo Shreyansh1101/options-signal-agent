@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from . import indicators as ind
-from .notify import chart_actions, push
+from .notify import chart_actions, get_anthropic_key, push
 from .options import chain_window, contracts_for_risk, limit_price, pick_contract, quote_of
 from .sentiment import claude_score_articles, symbol_news_scores
 from .state import track_record
@@ -241,11 +241,12 @@ def scan(client, cfg: dict, secrets, st: dict, now: datetime | None = None) -> d
             articles = client.news(list(analyses), now - timedelta(hours=sc["news_lookback_hours"]), now)
         except Exception as e:
             print(f"[news] failed: {e}")
-    if cfg["claude_news"]["enabled"] and secrets.anthropic_key and articles:
-        n = claude_score_articles(articles, secrets.anthropic_key, cfg["claude_news"]["model"], st["news_cache"])
+    claude_key = get_anthropic_key(secrets) if cfg["claude_news"]["enabled"] else ""
+    if claude_key and articles:
+        n = claude_score_articles(articles, claude_key, cfg["claude_news"]["model"], st["news_cache"])
         print(f"[news] Claude scored {n} new headlines")
     news = symbol_news_scores(articles, list(analyses), now, sc["news_half_life_hours"],
-                              st["news_cache"] if cfg["claude_news"]["enabled"] else None)
+                              st["news_cache"] if claude_key else None)
 
     market = analyses.get("SPY", {}).get("chart")
     scores = {}
