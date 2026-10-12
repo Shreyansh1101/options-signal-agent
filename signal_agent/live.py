@@ -21,7 +21,7 @@ import pandas as pd
 from .agent import ET, scan, send_summary, write_step_summary
 from .alpaca import AlpacaClient
 from .config import Secrets, load_config
-from .notify import push
+from .notify import poll_commands, push
 from .state import load_state, save_state
 
 STOCK_WS = os.environ.get("ALPACA_STOCK_WS", "wss://stream.data.alpaca.markets/v2/iex")
@@ -432,7 +432,19 @@ class Runner:
             stock_stream(self.secrets, self.live, self.wanted, lambda: None),
             news_stream(self.secrets, self.live, self.on_news),
             self.scheduler(),
+            self.command_loop(),
         )
+
+    async def command_loop(self) -> None:
+        """Every 30s: check the ntfy topic for setup commands (e.g. 'telegram <bot key>')."""
+        while True:
+            try:
+                done = await asyncio.to_thread(poll_commands, self.secrets)
+                if done:
+                    log(f"[commands] {', '.join(done)}")
+            except Exception as e:
+                log(f"[commands] {e!r}")
+            await asyncio.sleep(30)
 
 
 def run_live() -> int:

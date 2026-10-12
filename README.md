@@ -41,6 +41,15 @@ stores your keys in `/etc/signal-agent.env` (root-only), and starts the `signal-
 | Test the strategy on past data | Add `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `NTFY_TOPIC` as repo secrets (Settings → Secrets → Actions), then Actions → *Backtest & checks* → Run workflow |
 | Pause alerts | Oracle console → Compute → Instances → your instance → **Stop**. **Start** turns it back on |
 
+### Telegram alerts (recommended on iPhone)
+ntfy's iPhone banners can be unreliable, so the agent can also send every alert to Telegram:
+1. In Telegram, open **@BotFather** → `/newbot` → pick a name → copy the bot key it gives you.
+2. Open your new bot and tap **Start**.
+3. On **ntfy.sh/<your topic>** (browser), publish the message: `telegram <bot key>`
+4. Within a minute Telegram shows **"✅ Telegram connected"**. No server rebuild needed.
+
+Other commands you can publish to your topic: `test` (sends a test alert) and `telegram off`.
+
 ### Reading an alert
 ```
 BUY CALL · NVDA  (score +0.71)
