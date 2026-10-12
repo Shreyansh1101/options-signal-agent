@@ -51,6 +51,19 @@ def _tg_token(secrets: Secrets, settings: dict) -> str:
     return os.environ.get("TELEGRAM_BOT_TOKEN", "").strip() or settings.get("telegram_token", "")
 
 
+def tg_token_ok(token: str) -> bool | None:
+    """True = Telegram accepts the key, False = key rejected (typo/revoked), None = couldn't check."""
+    try:
+        r = requests.get(f"{TG_API}/bot{token}/getMe", timeout=15)
+        if r.status_code in (401, 404):
+            return False
+        r.raise_for_status()
+        return bool(r.json().get("ok"))
+    except Exception as e:
+        print(f"[telegram] getMe failed: {e}")
+        return None
+
+
 def tg_discover_chat(token: str) -> int | None:
     """Chat id of the most recent private message sent to the bot (the user tapping Start / saying hi)."""
     try:
@@ -140,6 +153,24 @@ def poll_commands(secrets: Secrets) -> list[str]:
         print(f"[commands] poll failed: {e}")
         return []
     done = []
+    # key saved earlier but chat not found yet → keep looking, connect as soon as the user taps Start
+    if settings.get("telegram_token") and not settings.get("telegram_chat_id") \
+            and tg_token_ok(settings["telegram_token"]) is False:
+        settings.pop("telegram_token")
+        save_settings(settings)
+        done.append("saved telegram key rejected")
+        _ntfy_only(secrets, "⚠️ Telegram key not accepted",
+                   "Telegram says the bot key you sent is wrong — usually a typo. Copy-paste the key from "
+                   "BotFather (don't retype it) and send 'telegram <key>' here again.")
+    if settings.get("telegram_token") and not settings.get("telegram_chat_id"):
+        chat = tg_discover_chat(settings["telegram_token"])
+        if chat:
+            settings["telegram_chat_id"] = chat
+            save_settings(settings)
+            tg_send(settings["telegram_token"], chat, "✅ Telegram connected",
+                    "Your options signal alerts will arrive here from now on (ntfy keeps working too).")
+            _ntfy_only(secrets, "✅ Telegram connected", "Check Telegram — a test message just arrived there.")
+            done.append("telegram connected (late)")
     for m in lines:
         if m.get("event") != "message":
             continue
@@ -148,6 +179,12 @@ def poll_commands(secrets: Secrets) -> list[str]:
         hit = TOKEN_RX.match(text)
         if hit:
             token = hit.group(1)
+            if tg_token_ok(token) is False:
+                done.append("telegram key rejected")
+                _ntfy_only(secrets, "⚠️ Telegram key not accepted",
+                           "Telegram says that bot key is wrong — usually a typo. Copy-paste the key from "
+                           "BotFather (don't retype it) and send 'telegram <key>' here again.")
+                continue
             settings["telegram_token"] = token
             settings.pop("telegram_chat_id", None)
             chat = tg_discover_chat(token)
@@ -161,8 +198,8 @@ def poll_commands(secrets: Secrets) -> list[str]:
             else:
                 done.append("telegram token saved, chat not found")
                 _ntfy_only(secrets, "⚠️ Telegram: almost there",
-                           "Got your bot key, but couldn't find your chat. Open your bot in Telegram, tap Start "
-                           "(or send it 'hi'), then publish the same telegram message here again.")
+                           "Got your bot key, but no message to the bot yet. Open your bot in Telegram and send it "
+                           "'hi' — it will connect automatically within a minute.")
         elif text.lower() in {"telegram off", "telegram stop"}:
             settings.pop("telegram_token", None)
             settings.pop("telegram_chat_id", None)

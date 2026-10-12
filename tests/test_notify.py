@@ -28,12 +28,15 @@ class Resp:
 
 
 class FakeHTTP:
-    def __init__(self, ntfy_msgs, chat_id=777):
-        self.ntfy_msgs, self.chat_id, self.posts = ntfy_msgs, chat_id, []
+    def __init__(self, ntfy_msgs, chat_id=777, token_ok=True):
+        self.ntfy_msgs, self.chat_id, self.posts, self.token_ok = ntfy_msgs, chat_id, [], token_ok
 
     def get(self, url, params=None, timeout=None):
         if url.endswith("/json"):
             return Resp(text="\n".join(json.dumps(m) for m in self.ntfy_msgs))
+        if url.endswith("/getMe"):
+            r = Resp({"ok": self.token_ok}); r.status_code = 200 if self.token_ok else 401
+            return r
         if url.endswith("/getUpdates"):
             res = [{"message": {"chat": {"id": self.chat_id, "type": "private"}}}] if self.chat_id else []
             return Resp({"ok": True, "result": res})
@@ -95,6 +98,18 @@ class TestTelegram(unittest.TestCase):
         http = FakeHTTP([{"event": "message", "id": "z", "message": "BUY PUT · SNXX telegram 123"}])
         self.assertEqual(self.run_with(http, notify.poll_commands, self.sec), [])
         self.assertNotIn("telegram_token", notify.load_settings())
+
+    def test_bad_key_is_reported(self):
+        http = FakeHTTP([{"event": "message", "id": "k", "message": f"telegram {TOKEN}"}], token_ok=False)
+        self.assertEqual(self.run_with(http, notify.poll_commands, self.sec), ["telegram key rejected"])
+        self.assertNotIn("telegram_token", notify.load_settings())
+        self.assertTrue(any("not accepted" in (p[1].get("title") or "") for p in http.posts))
+
+    def test_late_start_connects_on_next_poll(self):
+        notify.save_settings({"telegram_token": TOKEN, "ntfy_since": "x"})
+        http = FakeHTTP([], chat_id=555)
+        self.assertEqual(self.run_with(http, notify.poll_commands, self.sec), ["telegram connected (late)"])
+        self.assertEqual(notify.load_settings()["telegram_chat_id"], 555)
 
     def test_off(self):
         notify.save_settings({"telegram_token": TOKEN, "telegram_chat_id": 1})
