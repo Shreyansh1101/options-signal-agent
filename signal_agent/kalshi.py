@@ -51,6 +51,14 @@ def _ts(s: str | None) -> datetime | None:
         return None
 
 
+def market_link(series: str, event: str | None, title: str = "") -> str:
+    """Kalshi event page: kalshi.com/markets/<series>/<slug>/<event> (the slug is cosmetic; the event ticker decides)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "market"
+    if not event:
+        return f"https://kalshi.com/markets/{series.lower()}"
+    return f"https://kalshi.com/markets/{series.lower()}/{slug}/{event.lower()}"
+
+
 def ncdf(x: float) -> float:
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 
@@ -434,7 +442,7 @@ class KalshiEngine:
         return fee_coef(m["series"], _f(s.get("fee_multiplier")))
 
     def link(self, m: dict) -> str:
-        return f"https://kalshi.com/markets/{m['series'].lower()}"
+        return market_link(m["series"], m["event"], m.get("event_title") or "")
 
     # sizing / alerts -----------------------------------------
     def _size(self, price: float) -> int:
@@ -778,8 +786,9 @@ class KalshiEngine:
                "Only worth it if EVERY leg fills at these prices — check the order book first. "
                + ("Check that the listed outcomes cover every possibility." if side == "YES" else
                   "Safe because at most one outcome can resolve YES."))
+        url = market_link(ms[0]["series"], ev, meta.get("title", ""))
         push(self.secrets, f"⚖️ KALSHI MISPRICING · {meta.get('title', ev)[:50]}", msg, tags=["scales"], priority=4,
-             click=self.link(ms[0]))
+             click=url, actions=[{"action": "view", "label": "Open in Kalshi", "url": url}])
         self._set_cool("arb:" + ev, 180)
 
     # exits ---------------------------------------------------
@@ -839,7 +848,9 @@ class KalshiEngine:
                  f"P&L {pnl * 100:+.0f}¢/contract ({pnl * s['qty']:+.2f} on {s['qty']})\nTicker: {s['ticker']}")
         title = ("🏁 KALSHI SETTLED" if settled else f"KALSHI SELL {s['side'].upper()}") + f" · {s['title'][-60:]}"
         push(self.secrets, title, msg, tags=["checkered_flag" if settled else "moneybag"],
-             priority=3 if settled else 5, click=f"https://kalshi.com/markets/{s['series'].lower()}")
+             priority=3 if settled else 5, click=market_link(s["series"], s.get("event"), s.get("title", "")),
+             actions=[{"action": "view", "label": "Open in Kalshi",
+                       "url": market_link(s["series"], s.get("event"), s.get("title", ""))}])
         s.update({"closed": self.now().isoformat(), "exit": exit_px, "pnl": round(pnl, 4), "reason": reason})
         self.st["closed"].append(s)
         del self.st["open"][sid]
