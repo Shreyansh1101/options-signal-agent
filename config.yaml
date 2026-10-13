@@ -89,7 +89,7 @@ kalshi:
     tail_factor: 1.15                # widen volatility so tails aren't under-priced
 
   crypto:                            # BTC/ETH/SOL/XRP/DOGE… 15-minute, hourly and daily price markets (free, no AI)
-    enabled: true
+    enabled: false                   # turned off — set to true to bring crypto signals back
     series: {KXBTC15M: BTC, KXBTCD: BTC, KXBTC: BTC, KXETH15M: ETH, KXETHD: ETH, KXETH: ETH, ETH: ETH,
              KXSOL15M: SOL, KXSOLD: SOL, KXXRP15M: XRP, KXXRP: XRP, KXRIPPLE: XRP, KXRIPPLED: XRP,
              KXDOGE15M: DOGE, KXDOGED: DOGE, KXLTC: LTC, KXXLM: XLM, KXXLMD: XLM, KXNEAR15M: NEAR, KXNEARH: NEAR}
