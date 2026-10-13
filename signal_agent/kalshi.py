@@ -543,7 +543,7 @@ class KalshiEngine:
         done, fair_cache = [], {}
         for series, proxy in ix["series"].items():
             try:
-                evs = self.client.events(series, status="open", limit=10)
+                evs = self.client.events(series, status="open", limit=50)
             except Exception:
                 continue
             if not evs:
@@ -594,7 +594,7 @@ class KalshiEngine:
         open_tickers = {s["ticker"] for s in self.st["open"].values()}
         for series, coin in cx["series"].items():
             try:
-                evs = self.client.events(series, status="open", limit=6)
+                evs = self.client.events(series, status="open", limit=50)
             except Exception:
                 continue
             if not evs:
