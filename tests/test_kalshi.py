@@ -93,7 +93,7 @@ def fair_ladder(S=7800.0, sigma=0.15 * 1.15, mins=120, mispriced=None):
         p = K.prob_yes(m, S, sigma, mins)
         yb, ya = max(0.0, round(p - 0.01, 2)), min(1.0, round(p + 0.01, 2))
         if mispriced and code == mispriced:
-            yb, ya = 0.04, 0.05
+            yb, ya = 0.55, 0.57                          # bucket priced far above its neighbours → NO is cheap
         out.append(mk(f"KXINX-26OCT13H1600-{code}", "KXINX-26OCT13H1600", code, st, lo, hi, yb, ya))
     return out
 
@@ -148,18 +148,20 @@ class TestIndex(Base):
         done = e.scan_index()
         self.assertEqual(len(done), 1, done)
         sig = next(iter(e.st["open"].values()))
-        self.assertEqual((sig["ticker"], sig["side"], sig["entry"]), ("KXINX-26OCT13H1600-B7812", "yes", 0.05))
-        self.assertGreater(sig["fair"], 0.15)
-        self.assertTrue(any(n["title"].startswith("📈 KALSHI BUY YES") for n in notify.SENT))
+        self.assertEqual((sig["ticker"], sig["side"], sig["entry"]), ("KXINX-26OCT13H1600-B7812", "no", 0.45))
+        self.assertGreater(sig["fair"], 0.6)
+        self.assertTrue(any(n["title"].startswith("📈 KALSHI BUY NO") for n in notify.SENT))
         # no duplicate on the next minute
         self.assertEqual(e.scan_index(), [])
         # price catches up to fair value → SELL alert
-        fair = sig["fair"]
-        fk.ladder[sig["ticker"]].update({"yes_bid_dollars": f"{fair:.4f}", "yes_ask_dollars": f"{fair + 0.01:.4f}"})
+        fair = sig["fair"]                       # NO fair value → YES should trade near 1 - fair
+        y = 1 - fair
+        fk.ladder[sig["ticker"]].update({"yes_bid_dollars": f"{y - 0.01:.4f}", "yes_ask_dollars": f"{y:.4f}",
+                                         "no_bid_dollars": f"{1 - y:.4f}", "no_ask_dollars": f"{1 - y + 0.01:.4f}"})
         e.scan_index()
         out = e.manage_open()
         self.assertEqual(out, [f"exit {sig['ticker']}"])
-        self.assertTrue(any("KALSHI SELL YES" in n["title"] for n in notify.SENT))
+        self.assertTrue(any("KALSHI SELL NO" in n["title"] for n in notify.SENT))
         self.assertGreater(e.st["closed"][-1]["pnl"], 0.05)
 
     def test_settlement_alert(self):
@@ -167,10 +169,15 @@ class TestIndex(Base):
         e = self.engine(fk)
         e.scan_index()
         t = next(iter(e.st["open"].values()))["ticker"]
-        fk.ladder[t].update({"status": "finalized", "result": "yes"})
+        fk.ladder[t].update({"status": "finalized", "result": "no"})
         e.manage_open()
         self.assertTrue(any(n["title"].startswith("🏁 KALSHI SETTLED") for n in notify.SENT))
-        self.assertAlmostEqual(e.st["closed"][-1]["pnl"], 1 - 0.05 - e.st["closed"][-1]["fee"], places=4)
+        self.assertAlmostEqual(e.st["closed"][-1]["pnl"], 1 - 0.45 - e.st["closed"][-1]["fee"], places=4)
+
+    def test_one_signal_per_event_and_level_bias_ignored(self):
+        # our own index estimate is 40 points too low, but the ladder is fairly priced → no bet
+        e = self.engine(FakeKalshi(self.ladder()), prices=FakePrices(spy=776.0))
+        self.assertEqual(e.scan_index(), [])
 
     def test_bad_ratio_skips(self):
         e = self.engine(FakeKalshi(fair_ladder(mispriced="B7812")), prices=FakePrices(spy=78.0))

@@ -73,6 +73,7 @@ live:
 # ─────────────────────────────────────────────────────────────
 kalshi:
   enabled: true
+  since: "2026-10-15"               # recap scores the new model from this date
   categories: [Economics, Politics, Elections, World, Sports]   # for the Claude news forecasts
   max_pages: 40                      # how much of Kalshi's market list to scan (1,000 markets per page)
 
@@ -81,12 +82,19 @@ kalshi:
     series: {KXINX: SPY, KXINXU: SPY, KXINXI: SPY, KXNASDAQ100: QQQ, KXNASDAQ100U: QQQ, KXNASDAQ100I: QQQ}
     ratio_series: {SPY: KXINX, QQQ: KXNASDAQ100}     # daily series whose settlement calibrates index ÷ ETF
     ratio_bounds: {SPY: [9.0, 11.5], QQQ: [35, 50]}
-    min_edge: 0.06                   # dollars per contract after fees (6¢)
-    min_minutes_left: 20
-    max_trading_minutes: 1170        # up to ~3 trading days ahead
-    max_spread: 0.06
-    min_size: 5
-    tail_factor: 1.15                # widen volatility so tails aren't under-priced
+    # v2 (Oct 15): relative value only. The market's own ladder sets level + volatility; we only flag a contract
+    # that is out of line with its neighbours. v1 (our own index/vol estimate) lost 2.6¢/contract.
+    min_edge: 0.10                   # 10¢ per contract after fees
+    min_minutes_left: 30
+    max_trading_minutes: 1170
+    max_spread: 0.04
+    min_size: 20
+    min_price: 0.10                  # no long-shot contracts under 10¢
+    strike_types: [between]          # range buckets only; threshold "X or above" contracts lost money
+    min_fit_markets: 6
+    max_fit_error: 0.03              # skip events the smooth curve can't describe
+    max_signals_per_day: 3
+    tail_factor: 1.15
 
   crypto:                            # BTC/ETH/SOL/XRP/DOGE… 15-minute, hourly and daily price markets (free, no AI)
     enabled: false                   # turned off — set to true to bring crypto signals back

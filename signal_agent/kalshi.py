@@ -203,6 +203,28 @@ def ladder_complete(ms: list[dict], tol: float = 0.01) -> bool:
     return abs(highs[0]["floor"] - edge) <= 1.0     # 'between' caps end in .9999, the top tail starts at the next unit
 
 
+def fit_ladder(ms: list[dict], S0: float, minutes: float) -> tuple[float, float, float] | None:
+    """Robust least-squares fit of (level, vol) to an event's mid prices (worst point ignored). Returns (S, sigma, rmse)."""
+    mids = np.array([mid(m) for m in ms])
+    T = max(minutes, 0.5) / (390 * 252)
+    best = None
+    S_grid = S0 * (1 + np.linspace(-0.03, 0.03, 61))
+    v_grid = np.exp(np.linspace(np.log(0.03), np.log(1.2), 40))
+    for _ in range(2):                                   # coarse grid, then a finer one around the best point
+        for S in S_grid:
+            for v in v_grid:
+                pr = np.array([prob_yes(m, S, v, minutes) or 0.0 for m in ms])
+                sq = np.sort((pr - mids) ** 2)[:-1]       # trimmed: ignore the single worst point (the candidate)
+                err = float(np.sqrt(np.mean(sq)))
+                if best is None or err < best[2]:
+                    best = (float(S), float(v), err)
+        S, v, _e = best
+        sd = max(v * math.sqrt(T), 0.0004)
+        S_grid = S * (1 + np.linspace(-sd, sd, 21))
+        v_grid = v * np.exp(np.linspace(-0.3, 0.3, 21))
+    return best
+
+
 def realized_vol(bars5: pd.DataFrame | None) -> float | None:
     if bars5 is None or len(bars5) < 40:
         return None
@@ -538,50 +560,70 @@ class KalshiEngine:
         return sigma
 
     def scan_index(self) -> list[str]:
+        """Relative-value only: fit ONE smooth distribution (level + volatility) to the whole price ladder of an
+        event, then flag a single contract that is badly out of line with its neighbours. The market sets the
+        level and volatility, so our own (laggy, noisy) index/vol estimates can no longer bias the bets."""
         ix = self.k["index"]
         now = self.now()
         done, fair_cache = [], {}
+        today = now.astimezone(ET).date().isoformat()
+        sent_today = self.st.setdefault("index_day", {}).get(today, 0)
+        open_events = {s["event"] for s in self.st["open"].values()}
+        allowed = set(ix.get("strike_types", ["between"]))
         for series, proxy in ix["series"].items():
             try:
                 evs = self.client.events(series, status="open", limit=50)
             except Exception:
                 continue
-            if not evs:
-                continue
-            lvl = self._index_level(proxy)
+            lvl = self._index_level(proxy) if evs else None
             if not lvl:
                 continue
-            S, Sp = lvl
-            sigma = self._sigma(proxy, Sp)
+            S0 = lvl[0]
             for e in evs:
-                best = None
+                ms = []
                 for raw in e.get("markets") or []:
                     m = norm_market(raw, e)
-                    if not m["close"]:
+                    if not m["close"] or prob_yes(m, S0, 0.2, 60) is None:
                         continue
-                    mins = trading_minutes(now, m["close"])
-                    if mins < ix["min_minutes_left"] or mins > ix["max_trading_minutes"]:
+                    m["mins"] = trading_minutes(now, m["close"])
+                    if m["yes_ask"] - m["yes_bid"] <= ix["max_spread"] and 0 < m["yes_ask"] <= 1:
+                        ms.append(m)
+                if len(ms) < ix["min_fit_markets"]:
+                    continue
+                mins = ms[0]["mins"]
+                if mins < ix["min_minutes_left"] or mins > ix["max_trading_minutes"]:
+                    continue
+                fit = fit_ladder(ms, S0, mins)
+                if not fit:
+                    continue
+                S, sig, rmse = fit
+                for m in ms:
+                    fair_cache[m["ticker"]] = prob_yes(m, S, sig, mins)
+                if rmse > ix["max_fit_error"] or e["event_ticker"] in open_events or self._cool("ev:" + e["event_ticker"]):
+                    continue
+                if sent_today >= ix["max_signals_per_day"] or len(self.st["open"]) >= self.k["risk"]["max_open"]:
+                    continue
+                best = None
+                for m in ms:
+                    if m["strike_type"] not in allowed or self._cool(m["ticker"]):
                         continue
-                    p = prob_yes(m, S, sigma, mins)
-                    if p is None:
-                        continue
-                    fair_cache[m["ticker"]] = p
-                    if m["ticker"] in {s["ticker"] for s in self.st["open"].values()} or self._cool(m["ticker"]):
-                        continue
+                    p = fair_cache[m["ticker"]]
                     for side, fair, ask, size in (("yes", p, m["yes_ask"], m["yes_ask_size"]),
                                                   ("no", 1 - p, m["no_ask"], m["yes_bid_size"])):
-                        if not (0.02 <= ask <= 0.97) or (m["yes_ask"] - m["yes_bid"]) > ix["max_spread"]:
-                            continue
-                        if size and size < ix["min_size"]:
+                        if not (ix["min_price"] <= ask <= 0.95) or (size and size < ix["min_size"]):
                             continue
                         edge = fair - ask - fee_per_contract(ask, self.coef(m))
                         if edge >= ix["min_edge"] and (best is None or edge > best[0]):
-                            best = (edge, m, side, ask, fair, mins)
-                if best and len(self.st["open"]) < self.k["risk"]["max_open"]:
-                    edge, m, side, ask, fair, mins = best
-                    why = [f"Index est. {S:,.1f} ({proxy} {Sp:.2f}) · vol {sigma * 100:.0f}% · {mins:.0f} trading min left",
-                           "Model: lognormal fair value, tails widened for safety."]
+                            best = (edge, m, side, ask, fair)
+                if best:
+                    edge, m, side, ask, fair = best
+                    why = [f"Out of line with the rest of this ladder: market-implied S&P/Nasdaq level {S:,.0f}, "
+                           f"vol {sig * 100:.0f}% (fit error {rmse * 100:.1f}¢) · {mins:.0f} trading min left"]
                     self._open_signal("index", m, side, ask, fair, why, {"proxy": proxy})
+                    self._set_cool("ev:" + e["event_ticker"], 24 * 60)
+                    open_events.add(e["event_ticker"])
+                    sent_today += 1
+                    self.st["index_day"] = {today: sent_today}
                     done.append(f"index {side} {m['ticker']} edge {edge:.2f}")
         self._index_fair = fair_cache
         return done
@@ -892,6 +934,11 @@ class KalshiEngine:
             wins = sum(1 for x in allc if x > 0)
             lines.append(f"Track record: {len(allc)} signals · win rate {wins / len(allc) * 100:.0f}% · "
                          f"avg {sum(allc) / len(allc) * 100:+.1f}¢/contract")
+            v2 = [c for c in self.st["closed"] if c.get("pnl") is not None and c["opened"] >= self.k.get("since", "")]
+            for kind in ("index", "news", "crypto"):
+                xs = [c["pnl"] for c in v2 if c["kind"] == kind]
+                if xs:
+                    lines.append(f"  {kind} (new model): {len(xs)} · avg {sum(xs) / len(xs) * 100:+.1f}¢")
         lines.append(f"Claude analyses used today: {self.st['budget'].get(day, 0)}/{self.k['news']['max_analyses_per_day']}")
         lines.append(f"Watching {len(self.universe):,} Kalshi markets · {self.stats.get('crypto_markets', 0)} crypto contracts priced")
         push(self.secrets, f"📊 Kalshi recap · {now_et:%a %b %d}", "\n".join(lines), tags=["bar_chart"], priority=2)
